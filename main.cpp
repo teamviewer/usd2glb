@@ -4,12 +4,15 @@
 #include <usdShade.hh>
 #include <usdSkel.hh>
 #include <usda-writer.hh>
+#include "value-pprint.hh"
+#include "prim-pprint.hh"
+#include "value-pprint.hh"
 
 #define TINYGLTF_IMPLEMENTATION
 #include <tiny_gltf.h>
 
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
+//#define STB_IMAGE_IMPLEMENTATION
+//#define STB_IMAGE_WRITE_IMPLEMENTATION
 
 
 #include <glm.hpp>
@@ -20,6 +23,7 @@
 #include <unordered_map>
 #include <filesystem>
 #include <crc64.h>
+#include <tydra/scene-access.hh>
 
 #include "Image.h"
 
@@ -66,28 +70,37 @@ inline glm::mat4 mat_convert(const tinyusdz::value::matrix4d& mat)
 }
 
 #if 1
-int main(int argc, char* argv[])
-{
-	if (argc < 3)
-	{
-		printf("usd2glb input.usdc output.glb\n");
-		return 0;
-	}
 
-	std::string path_model = std::filesystem::path(argv[1]).parent_path().u8string();	
+#ifdef MAKE_A_DLL
+
+#define USD2GLB_EXPORTS
+
+#ifdef USD2GLB_EXPORTS
+#define USD2GLB_API extern "C" __declspec(dllexport)
+#else
+#define USD2GLB_API extern "C" __declspec(dllimport)
+#endif
+#else
+#define USD2GLB_API
+#endif
+
+USD2GLB_API int usd2glb(const char* usdPathInput, const char* glbPathOutput)
+{
+	std::string path_model = std::filesystem::path(usdPathInput).parent_path().u8string();
 
 	std::string warn;
 	std::string err;
 
 	tinyusdz::Stage stage;
 	tinyusdz::USDLoadOptions options;
+	options.max_image_width = options.max_image_height = 4096;
 	options.load_assets = false;
-	bool ret = tinyusdz::LoadUSDCFromFile(argv[1], &stage, &warn, &err, options);
+	bool ret = tinyusdz::LoadUSDFromFile(usdPathInput, &stage, &warn, &err, options);
 	if (!ret)
 	{
 		printf("%s\n", warn.c_str());
 		printf("%s\n", err.c_str());
-		return 0;
+		return -1;
 	}
 
 	// tinyusdz::usda::SaveAsUSDA("output.usda", stage, &warn, &err);
@@ -154,9 +167,11 @@ int main(int argc, char* argv[])
 
 			auto* material_in = prim.prim->data().as<tinyusdz::Material>();
 			material_mid.name = material_in->name;
-			std::string outputs_surface = material_in->surface->target.value().prim_part();
-			const tinyusdz::Prim* pshader0 = stage.GetPrimAtPath(tinyusdz::Path(outputs_surface, "")).value();
-			auto* shader0 = pshader0->data().as<tinyusdz::Shader>();
+			const std::vector<tinyusdz::Path>& connections = material_in->surface.get_connections();
+			auto ppath = connections[0].get_parent_path();
+			nonstd::expected<const tinyusdz::Prim*, std::string> pshader0 = stage.GetPrimAtPath(ppath);
+			const tinyusdz::Prim* prim = pshader0.value();
+			auto* shader0 = prim->data().as<tinyusdz::Shader>();
 			auto* surface = shader0->value.as<tinyusdz::UsdPreviewSurface>();
 
 			int useSpecularWorkflow;
@@ -186,11 +201,41 @@ int main(int argc, char* argv[])
 						{
 							std::string path_uv = uv_connection.value().prim_part();
 							const tinyusdz::Prim* pshader2 = stage.GetPrimAtPath(tinyusdz::Path(path_uv, "")).value();
-							auto* shader2 = pshader2->data().as<tinyusdz::Shader>();
+							const tinyusdz::Shader* shader2 = pshader2->data().as<tinyusdz::Shader>();
 							auto* uvset = shader2->value.as<tinyusdz::UsdPrimvarReader_float2>();
+							
+							if (uvset->varname.is_connection() == true)
+							{
+								nonstd::optional<tinyusdz::Path> varname_connectionOpt = uvset->varname.get_connection();
+								if (varname_connectionOpt.has_value())
+								{
+									tinyusdz::Path varname_connection = varname_connectionOpt.value();
+									std::string path_varname = varname_connection.prim_part();
+									std::string prop = varname_connection.prop_part();
+									const tinyusdz::Prim* prim_varname = stage.GetPrimAtPath(tinyusdz::Path(path_varname, "")).value();
+									auto* material_inB = prim_varname->data().as<tinyusdz::Material>();
+									if (material_inB)
+									{
+										auto propPairIt = material_inB->props.find(prop);
+										if (propPairIt != std::end(material_inB->props))
+										{
+											tinyusdz::Property property = propPairIt->second;
+											if (property.is_attribute())
+											{
+												tinyusdz::Attribute attribute = property.get_attribute();
+												tinyusdz::value::token propToken = attribute.get_value<tinyusdz::value::token>().value();
+												material_mid.uvset = propToken.str();
+											}
+										}
+									}
+								}
+							}
+							else
+							{
 							tinyusdz::value::token token_uv;
 							uvset->varname.get_value().value().get_scalar(&token_uv);
 							material_mid.uvset = token_uv.str();
+							}
 						}
 					}
 					else if (shader1->value.type_id() == tinyusdz::value::TYPE_ID_IMAGING_PRIMVAR_READER_FLOAT3)
@@ -2591,8 +2636,26 @@ int main(int argc, char* argv[])
 	}
 
 	tinygltf::TinyGLTF gltf;
-	gltf.WriteGltfSceneToFile(&m_out, argv[2], true, true, false, true);
+	bool writeGltfSuccess = gltf.WriteGltfSceneToFile(&m_out, glbPathOutput, true, true, false, true);
+	if(writeGltfSuccess == false)
+	{
+		return -2;
+	}
 
 	return 0;
 }
+
+#ifndef MAKE_A_DLL
+int main(int argc, char* argv[])
+{
+	if (argc < 3)
+	{
+		printf("usd2glb input.usdc output.glb\n");
+	return 0;
+	}
+
+	return usd2glb(argv[1], argv[2]);
+
+}
+#endif
 #endif

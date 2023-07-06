@@ -33,5 +33,8 @@ endif()
 include_directories(${INCLUDE_DIR})
 add_definitions(${DEFINES})
 add_executable(usd2glb ${SOURCES})
+add_library(usd2glbLib SHARED ${SOURCES})
 target_link_libraries(usd2glb tinyusdz_static) 
+target_compile_definitions(usd2glbLib PUBLIC MAKE_A_DLL)
+target_link_libraries(usd2glbLib tinyusdz_static) 
 
