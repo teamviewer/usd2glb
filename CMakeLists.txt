@@ -1,7 +1,7 @@
 cmake_minimum_required (VERSION 3.0)
 project(usd2glb)
-
-add_subdirectory(tinyusdz)
+include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
+conan_basic_setup()
 
 set (SOURCES
 crc64/crc64.cpp
@@ -9,15 +9,16 @@ main.cpp
 Image.h
 )
 
+message(CONAN_INCLUDE_DIRS_TINYUSDZ="${CONAN_INCLUDE_DIRS_TINYUSDZ}")
 
 set (INCLUDE_DIR
-tinyusdz/src
-tinyusdz/src/external
+${CONAN_INCLUDE_DIRS_TINYUSDZ}/tinyusdz
+${CONAN_INCLUDE_DIRS_TINYUSDZ}/tinyusdz/external
+${CONAN_INCLUDE_DIRS_TINYUSDZ}/tinyusdz/external/jsonhpp/nlohmann
 glm/glm
 crc64
 .
 )
-
 
 set(CMAKE_CXX_STANDARD 17)
 if (WIN32) 
@@ -33,8 +34,5 @@ endif()
 include_directories(${INCLUDE_DIR})
 add_definitions(${DEFINES})
 add_executable(usd2glb ${SOURCES})
-add_library(usd2glbLib SHARED ${SOURCES})
-target_link_libraries(usd2glb tinyusdz_static) 
-target_compile_definitions(usd2glbLib PUBLIC MAKE_A_DLL)
-target_link_libraries(usd2glbLib tinyusdz_static) 
+target_link_libraries(usd2glb ${CONAN_LIBS}) 
 
